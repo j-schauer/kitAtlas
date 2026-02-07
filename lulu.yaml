@@ -1,0 +1,69 @@
+version: 0.1.0
+name: kitAtlas
+
+# Font atlas management - caching, paging, batching
+# Publishes TS source files (module pattern)
+
+deps:
+  node-modules:
+    type: transient
+    path: node_modules/
+    export: []
+    notes: "esbuild, typescript, http-server"
+    update: npm install
+
+  kitMSDF:
+    type: transient
+    source: "local:../kitMSDF (TODO: publish to github)"
+    path: lib/kitMSDF/
+    export: []
+    notes: "MSDF glyph generation (WASM) - for tests and examples"
+    update: mkdir -p lib/kitMSDF && cp ../kitMSDF/dist/kitMSDF.js ../kitMSDF/dist/msdf-core.js ../kitMSDF/dist/msdf-core.wasm lib/kitMSDF/
+
+  pixl:
+    type: transient-depot
+    source: "github:j-schauer/pixl"
+    path: lib/pixl/
+    export: []
+    notes: "PixiJS for example/glyphRun"
+    update: lulu depot github j-schauer/pixl 'pixl-*.zip' lib/pixl/ --latest
+
+build:
+  test:
+    - |
+      @deps
+      mkdir -p ${TARGET}/assets
+      # Bundle for testing (includes kitMSDF)
+      npx esbuild src/index.ts --bundle --format=esm --platform=node --target=es2020 \
+        --outfile=${TARGET}/kitAtlas.js \
+        --external:fs --external:path --external:module --external:url --external:worker_threads
+      # Copy kitMSDF artifacts
+      cp lib/kitMSDF/msdf-core.js lib/kitMSDF/msdf-core.wasm ${TARGET}/
+      cp lib/kitMSDF/kitMSDF.js ${TARGET}/
+      cp assets/*.ttf ${TARGET}/assets/
+      # Compile tests
+      npx tsc tests/font-atlas-test.ts --target esnext --module esnext --moduleResolution node --outDir ${TARGET} --skipLibCheck
+
+  release:
+    - |
+      @deps
+      mkdir -p ${TARGET}
+      # Copy TS source files (module pattern)
+      cp src/*.ts ${TARGET}/
+      cp src/shaders.js ${TARGET}/
+      cp docs/api.md ${TARGET}/
+
+run:
+  test:
+    - |
+      @build test
+      cd ${TARGET} && node font-atlas-test.js
+
+  example:
+    - |
+      @deps
+      echo "Open http://localhost:8000/example/glyphRun/"
+      npx http-server . -p 8000 --cors -c-1
+
+clean:
+  - rm -rf build dist node_modules

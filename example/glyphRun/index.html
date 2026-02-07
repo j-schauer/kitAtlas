@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<!--
+  Multi-Glyph Demo - Tests rendering multiple glyphs using DemoGlyphRun class
+
+  This is SEPARATE from test_render.html which tests single characters.
+  Pattern here is similar to blockText's PixiGlyphRunNode.
+
+  Atlas Modes:
+  0 - Pre-made: Load existing atlas.json + atlas.png
+  1 - FontAtlas Sync: Use prefabLatin() to generate all Latin chars synchronously
+  2 - FontAtlas Async: Use getGlyph() with async batch generation
+
+  Run: npx http-server . -p 8000 --cors
+  Open: http://localhost:8000/demo/glyphRun/
+-->
+<html>
+<head>
+    <title>Multi-Glyph Demo</title>
+    <style>
+        body { background: #222; color: #fff; font-family: monospace; margin: 0; padding: 20px; }
+        .container { display: flex; gap: 20px; }
+        canvas { border: 1px solid #555; background: #000; }
+        .controls { width: 300px; }
+        .control-group { margin-bottom: 15px; padding: 10px; background: #333; }
+        label { display: block; margin-bottom: 5px; }
+        input[type=text] { width: 100%; padding: 8px; background: #444; color: #fff; border: 1px solid #555; font-size: 16px; }
+        input[type=range] { width: 100%; }
+        select { width: 100%; padding: 8px; background: #444; color: #fff; border: 1px solid #555; }
+        .val { float: right; color: #8f8; }
+        #log { margin-top: 20px; font-size: 12px; color: #aaa; max-height: 200px; overflow-y: auto; }
+        h3 { margin: 0 0 10px 0; color: #8cf; }
+        .mode-info { font-size: 11px; color: #888; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h2>Multi-Glyph Demo (Pixi WebGPU) <span style="color:#888;font-size:14px">v2026.02.05b</span></h2>
+    <div class="container">
+        <canvas id="canvas" width="800" height="400"></canvas>
+        <div class="controls">
+            <div class="control-group">
+                <h3>Atlas Mode</h3>
+                <select id="atlasMode">
+                    <option value="0">0 - Pre-made (JSON + PNG)</option>
+                    <option value="1">1 - FontAtlas Sync (prefabLatin)</option>
+                    <option value="2">2 - FontAtlas Async (getGlyph)</option>
+                </select>
+                <div id="modeInfo" class="mode-info">Loads pre-generated atlas.json + atlas.png</div>
+            </div>
+            <div class="control-group">
+                <h3>Text Input</h3>
+                <input type="text" id="textInput" value="HelloWorld" placeholder="Type text (Latin only: a-z A-Z 0-9)">
+            </div>
+            <div class="control-group">
+                <h3>Position</h3>
+                <label>X <span id="xVal" class="val">50</span></label>
+                <input type="range" id="posX" min="0" max="700" value="50">
+                <label>Y <span id="yVal" class="val">100</span></label>
+                <input type="range" id="posY" min="0" max="350" value="100">
+            </div>
+            <div class="control-group">
+                <h3>Size</h3>
+                <label>Font Size <span id="sizeVal" class="val">48</span></label>
+                <input type="range" id="fontSize" min="12" max="128" value="48">
+            </div>
+            <div class="control-group">
+                <h3>Rendering</h3>
+                <label>Smoothing <span id="smoothVal" class="val">1.0</span></label>
+                <input type="range" id="smoothing" min="0" max="2" step="0.1" value="1.0">
+                <label>Weight <span id="weightVal" class="val">0</span></label>
+                <input type="range" id="weight" min="-0.5" max="0.5" step="0.05" value="0">
+            </div>
+            <div class="control-group">
+                <h3>Debug</h3>
+                <label><input type="radio" name="debug" value="0" checked> Normal</label>
+                <label><input type="radio" name="debug" value="3"> Raw Texture</label>
+            </div>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as PIXI from '../../lib/pixl/pixl.mjs';
+        import { DemoGlyphRun } from './DemoGlyphRun.js';
+        import { init as initFontAtlas, FontAtlas } from '../../dist/release/fontAtlas-browser.js';
+
+        const log = (msg) => {
+            console.log(msg);
+            document.getElementById('log').innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}<br>` + document.getElementById('log').innerHTML;
+        };
+
+        function logAtlasDebug(json) {
+            const testChars = [72, 101, 111]; // H, e, o
+            const names = {72: 'H', 101: 'e', 111: 'o'};
+            log(`--- Atlas Debug (size=${json.info.size}, base=${json.common.base}) ---`);
+            for (const id of testChars) {
+                const c = json.chars.find(ch => ch.id === id);
+                if (c) {
+                    log(`${names[id]}: ${c.width}x${c.height} xoff=${c.xoffset.toFixed(2)} yoff=${c.yoffset.toFixed(2)} adv=${c.xadvance.toFixed(2)}`);
+                }
+            }
+            log(`-------------------------------------------------`);
+        }
+
+        // State
+        const state = {
+            text: 'HelloWorld',
+            x: 50,
+            y: 100,
+            fontSize: 48,
+            smoothing: 1.0,
+            weight: 0,
+            debugMode: 0,
+            atlasMode: 0
+        };
+
+        let app = null;
+        let glyphRun = null;
+        let atlasTexture = null;
+        let atlasJson = null;
+
+        // FontAtlas mode state
+        let fontAtlasInstance = null;
+        let msdfGenerator = null;
+        let fontBytes = null;
+
+        // Pixi TextureFactory for FontAtlas
+        class PixiTextureFactory {
+            create(width, height, buffer) {
+                const source = new PIXI.BufferImageSource({
+                    resource: new Uint8Array(buffer),
+                    width,
+                    height
+                });
+                return new PIXI.Texture({ source });
+            }
+            update(texture, buffer) {
+                const source = texture.source;
+                source.resource = new Uint8Array(buffer);
+                source.update();
+            }
+            destroy(texture) {
+                texture.destroy(true);
+            }
+        }
+
+        const modeDescriptions = {
+            0: 'Loads pre-generated atlas.json + atlas.png',
+            1: 'Uses FontAtlas.prefabLatin() - generates all Latin chars synchronously before rendering',
+            2: 'Uses FontAtlas.getGlyph() - generates glyphs on-demand with async batching'
+        };
+
+        async function initApp() {
+            log('Initializing Pixi WebGPU...');
+
+            app = new PIXI.Application();
+            await app.init({
+                canvas: document.getElementById('canvas'),
+                width: 800,
+                height: 400,
+                resolution: 1,
+                autoDensity: true,
+                preference: 'webgpu',
+                backgroundColor: 0x333366
+            });
+
+            if (app.renderer.type !== PIXI.RendererType.WEBGPU) {
+                throw new Error('WebGPU not available');
+            }
+            const c = document.getElementById('canvas');
+            console.log(`Canvas backing: ${c.width}x${c.height}, CSS display: ${c.clientWidth}x${c.clientHeight}`);
+            log('Pixi WebGPU initialized');
+
+            // Debug: draw 100x100 square at top-left to check for stretch
+            const debugSquare = new PIXI.Graphics();
+            debugSquare.rect(0, 0, 100, 100);
+            debugSquare.fill({ color: 0xff0000, alpha: 0.5 });
+            debugSquare.stroke({ color: 0xffffff, width: 2 });
+            app.stage.addChild(debugSquare);
+
+            // Animation loop for uniform updates
+            app.ticker.add(() => {
+                if (glyphRun && glyphRun.uniforms) {
+                    glyphRun.setUniform('uSmoothing', state.smoothing);
+                    glyphRun.setUniform('uWeight', state.weight);
+                    glyphRun.setUniform('uDebugMode', state.debugMode);
+                }
+            });
+
+            await switchAtlasMode(state.atlasMode);
+        }
+
+        async function switchAtlasMode(mode) {
+            state.atlasMode = mode;
+            document.getElementById('modeInfo').textContent = modeDescriptions[mode];
+
+            // Cleanup previous
+            if (glyphRun) {
+                app.stage.removeChild(glyphRun.container);
+                glyphRun = null;
+            }
+            if (fontAtlasInstance) {
+                fontAtlasInstance.dispose();
+                fontAtlasInstance = null;
+            }
+
+            const start = performance.now();
+
+            if (mode === 0) {
+                await initPreMadeAtlas();
+            } else if (mode === 1) {
+                await initFontAtlasSync();
+            } else if (mode === 2) {
+                await initFontAtlasAsync();
+            }
+
+            log(`Mode ${mode} initialized in ${(performance.now() - start).toFixed(1)}ms`);
+            updateText();
+        }
+
+        // Mode 0: Pre-made atlas (JSON + PNG)
+        async function initPreMadeAtlas() {
+            log('Loading pre-made atlas...');
+            const bust = Date.now();
+            const [img, json] = await Promise.all([
+                loadImage(`../assets/atlas.png?v=${bust}`),
+                fetch(`../assets/atlas.json?v=${bust}`).then(r => r.json())
+            ]);
+            atlasTexture = PIXI.Texture.from(img);
+            atlasJson = json;
+            log(`Pre-made atlas: ${json.chars.length} chars, ${json.common.scaleW}x${json.common.scaleH}`);
+            logAtlasDebug(json);
+
+            glyphRun = new DemoGlyphRun(PIXI, { fontSize: state.fontSize, pxRange: 8 });
+            glyphRun.setAtlas(atlasTexture, atlasJson);
+            app.stage.addChild(glyphRun.container);
+        }
+
+        // Mode 1: FontAtlas with prefabLatin (synchronous)
+        async function initFontAtlasSync() {
+            log('Initializing FontAtlas (sync mode)...');
+
+            // Load WASM if not already
+            if (!msdfGenerator) {
+                const { msdf } = await initFontAtlas(`../../dist/release/msdf-core.wasm?v=${Date.now()}`);
+                msdfGenerator = msdf;
+                log('WASM loaded');
+            }
+
+            // Load font if not already
+            if (!fontBytes) {
+                const resp = await fetch('../../assets/Poppins-Regular.ttf');
+                fontBytes = new Uint8Array(await resp.arrayBuffer());
+                log(`Font loaded: ${fontBytes.length} bytes`);
+            }
+
+            // Create FontAtlas with sync prefab
+            const textureFactory = new PixiTextureFactory();
+            fontAtlasInstance = new FontAtlas(
+                msdfGenerator,
+                textureFactory,
+                () => {
+                    log('Async glyphs ready - rebuilding');
+                    rebuildAtlasFromFontAtlas();
+                },
+                { genSizes: [64], sizeThresholds: [], pageSize: 512, pixelRange: 8 }
+            );
+
+            // prefabLatin: creates Latin pages synchronously if not already done
+            // After this, Latin chars are cached. Other chars work normally (async if not cached).
+            const prefabStart = performance.now();
+            fontAtlasInstance.prefabLatin('demo', 32, fontBytes);
+            log(`prefabLatin() completed in ${(performance.now() - prefabStart).toFixed(1)}ms`);
+
+            // Build atlas for current text (Latin cached, others queued async)
+            const { texture, json } = buildAtlasForText(fontAtlasInstance, fontBytes, state.text);
+            atlasTexture = texture;
+            atlasJson = json;
+            logAtlasDebug(json);
+
+            glyphRun = new DemoGlyphRun(PIXI, { fontSize: state.fontSize, pxRange: 8 });
+            glyphRun.setAtlas(atlasTexture, atlasJson);
+            app.stage.addChild(glyphRun.container);
+        }
+
+        // Mode 2: FontAtlas with async getGlyph
+        async function initFontAtlasAsync() {
+            log('Initializing FontAtlas (async mode)...');
+
+            // Load WASM if not already
+            if (!msdfGenerator) {
+                const { msdf } = await initFontAtlas(`../../dist/release/msdf-core.wasm?v=${Date.now()}`);
+                msdfGenerator = msdf;
+                log('WASM loaded');
+            }
+
+            // Load font if not already
+            if (!fontBytes) {
+                const resp = await fetch('../../assets/Poppins-Regular.ttf');
+                fontBytes = new Uint8Array(await resp.arrayBuffer());
+                log(`Font loaded: ${fontBytes.length} bytes`);
+            }
+
+            // Create FontAtlas WITHOUT prefab - glyphs generated on demand
+            const textureFactory = new PixiTextureFactory();
+            fontAtlasInstance = new FontAtlas(
+                msdfGenerator,
+                textureFactory,
+                () => {
+                    log('Async batch complete - rebuilding atlas');
+                    try {
+                        rebuildAtlasFromFontAtlas();
+                    } catch (e) {
+                        log('Error in rebuildAtlasFromFontAtlas: ' + e.message);
+                    }
+                },
+                { genSizes: [64], sizeThresholds: [], pageSize: 512, pixelRange: 8 }
+            );
+
+            // Request ONLY the chars we need for current text (async)
+            requestGlyphsForText(state.text);
+
+            // Create empty glyph run - will be populated when async completes
+            glyphRun = new DemoGlyphRun(PIXI, { fontSize: state.fontSize, pxRange: 8 });
+            app.stage.addChild(glyphRun.container);
+
+            log('Glyphs queued for async generation...');
+        }
+
+        function requestGlyphsForText(text) {
+            if (!fontAtlasInstance || !fontBytes) return;
+            const requested = new Set();
+            for (const char of text) {
+                const code = char.charCodeAt(0);
+                if (code >= 32 && !requested.has(code)) {  // Include space and above
+                    requested.add(code);
+                    fontAtlasInstance.getGlyph({
+                        codePoint: code,
+                        variantId: 'demo',
+                        fontBuffer: fontBytes,
+                        renderSize: 32
+                    });
+                }
+            }
+        }
+
+        function rebuildAtlasFromFontAtlas() {
+            if (!fontAtlasInstance || !fontBytes || !glyphRun) return;
+
+            // Build atlas from only the chars in current text
+            const { texture, json } = buildAtlasForText(fontAtlasInstance, fontBytes, state.text);
+            if (texture && json.chars.length > 0) {
+                atlasTexture = texture;
+                atlasJson = json;
+                glyphRun.setAtlas(atlasTexture, atlasJson);
+                updateText();
+            }
+        }
+
+        // Build atlas JSON for specific text only
+        // LIMITATION: All chars must be on the same texture page. Throws if not.
+        function buildAtlasForText(fa, fontBuffer, text) {
+            const codepoints = new Set();
+            for (const char of text) {
+                codepoints.add(char.charCodeAt(0));
+            }
+
+            const chars = [];
+            let pageTexture = null;
+            let pageW = 512, pageH = 512;
+            let genSize = 64;  // Will be updated from actual glyph info
+
+            for (const cp of codepoints) {
+                const info = fa.getGlyph({
+                    codePoint: cp,
+                    variantId: 'demo',
+                    fontBuffer: fontBuffer,
+                    renderSize: 48  // Request size, FontAtlas picks nearest genSize
+                });
+
+                if (info.genSize) genSize = info.genSize;
+                log(`getGlyph(${cp}/${String.fromCharCode(cp)}): cached=${info.cached} genSize=${info.genSize}`);
+
+                if (info.cached && info.texture) {
+                    if (!pageTexture) {
+                        pageTexture = info.texture;
+                        pageW = info.texture.width;
+                        pageH = info.texture.height;
+                    } else if (info.texture !== pageTexture) {
+                        throw new Error(`Multiple texture pages not supported. Char '${String.fromCharCode(cp)}' is on different page.`);
+                    }
+
+                    const base = Math.ceil(info.genSize * 0.8);
+                    const xoffset = info.metrics.planeBounds.l;
+                    const yoffset = base - info.metrics.planeBounds.t;
+
+                    chars.push({
+                        id: cp,
+                        x: Math.round(info.uvs.u0 * pageW),
+                        y: Math.round(info.uvs.v0 * pageH),
+                        width: info.metrics.width,
+                        height: info.metrics.height,
+                        xoffset: xoffset,
+                        yoffset: yoffset,
+                        xadvance: info.metrics.advance,
+                        page: 0,
+                        chnl: 15
+                    });
+                }
+            }
+
+            const base = Math.ceil(genSize * 0.8);
+            const json = {
+                info: { face: 'FontAtlas', size: genSize },
+                common: { lineHeight: Math.ceil(genSize * 1.2), base: base, scaleW: pageW, scaleH: pageH, pages: 1 },
+                chars: chars
+            };
+
+            return { texture: pageTexture, json };
+        }
+
+        function buildAtlasFromFontAtlas(fa, fontBuffer, latinOnly = false) {
+            // Get codepoints - Latin only for sync mode, full set for async
+            const codepoints = [];
+            for (let cp = 65; cp <= 90; cp++) codepoints.push(cp);   // A-Z
+            for (let cp = 97; cp <= 122; cp++) codepoints.push(cp);  // a-z
+            for (let cp = 48; cp <= 57; cp++) codepoints.push(cp);   // 0-9
+            if (!latinOnly) {
+                codepoints.push(32, 33, 44, 46, 63, 58, 59, 39, 34); // space, punctuation
+            }
+
+            const chars = [];
+            let pageTexture = null;
+            let pageW = 512, pageH = 512;
+            let genSize = 64;  // Will be updated from actual glyph info
+
+            for (const cp of codepoints) {
+                const info = fa.getGlyph({
+                    codePoint: cp,
+                    variantId: 'demo',
+                    fontBuffer: fontBuffer,
+                    renderSize: 48  // Request size, FontAtlas picks nearest genSize
+                });
+
+                // Use actual generation size from FontAtlas
+                if (info.genSize) genSize = info.genSize;
+
+                if (!pageTexture && info.texture) {
+                    pageTexture = info.texture;
+                    pageW = info.texture.width;
+                    pageH = info.texture.height;
+                }
+
+                if (info.cached) {
+                    // Use actual genSize for base calculation
+                    const base = Math.ceil(info.genSize * 0.8);
+                    const xoffset = info.metrics.planeBounds.l;
+                    const yoffset = base - info.metrics.planeBounds.t;
+
+                    chars.push({
+                        id: cp,
+                        x: Math.round(info.uvs.u0 * pageW),
+                        y: Math.round(info.uvs.v0 * pageH),
+                        width: info.metrics.width,
+                        height: info.metrics.height,
+                        xoffset: xoffset,
+                        yoffset: yoffset,
+                        xadvance: info.metrics.advance,
+                        page: 0,
+                        chnl: 15
+                    });
+                }
+            }
+
+            const base = Math.ceil(genSize * 0.8);
+            const json = {
+                info: { face: 'FontAtlas', size: genSize },
+                common: { lineHeight: Math.ceil(genSize * 1.2), base: base, scaleW: pageW, scaleH: pageH, pages: 1 },
+                chars: chars
+            };
+
+            return { texture: pageTexture || PIXI.Texture.WHITE, json };
+        }
+
+        function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'Anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error(`Failed: ${src}`));
+                img.src = src;
+            });
+        }
+
+        function updateText() {
+            if (!glyphRun) return;
+
+            // In async mode, request any new glyphs
+            if (state.atlasMode === 2 && fontAtlasInstance) {
+                requestGlyphsForText(state.text);
+            }
+
+            glyphRun.fontSize = state.fontSize;
+            const count = glyphRun.renderText(state.text, state.x, state.y, {
+                smoothing: state.smoothing,
+                weight: state.weight,
+                debugMode: state.debugMode
+            });
+            log(`Rendered "${state.text}" (${count} glyphs)`);
+        }
+
+        // Controls
+        document.getElementById('atlasMode').onchange = e => {
+            switchAtlasMode(parseInt(e.target.value));
+        };
+
+        document.getElementById('textInput').oninput = e => {
+            state.text = e.target.value;
+            updateText();
+        };
+
+        document.getElementById('posX').oninput = e => {
+            state.x = parseInt(e.target.value);
+            document.getElementById('xVal').textContent = state.x;
+            updateText();
+        };
+
+        document.getElementById('posY').oninput = e => {
+            state.y = parseInt(e.target.value);
+            document.getElementById('yVal').textContent = state.y;
+            updateText();
+        };
+
+        document.getElementById('fontSize').oninput = e => {
+            state.fontSize = parseInt(e.target.value);
+            document.getElementById('sizeVal').textContent = state.fontSize;
+            updateText();
+        };
+
+        document.getElementById('smoothing').oninput = e => {
+            state.smoothing = parseFloat(e.target.value);
+            document.getElementById('smoothVal').textContent = state.smoothing.toFixed(1);
+        };
+
+        document.getElementById('weight').oninput = e => {
+            state.weight = parseFloat(e.target.value);
+            document.getElementById('weightVal').textContent = state.weight.toFixed(2);
+        };
+
+        document.querySelectorAll('input[name="debug"]').forEach(r => {
+            r.onchange = e => {
+                state.debugMode = parseInt(e.target.value);
+            };
+        });
+
+        // Start
+        initApp().catch(e => log('Error: ' + e.message));
+    </script>
+</body>
+</html>
