@@ -81,7 +81,8 @@
     <script type="module">
         import * as PIXI from '../../lib/pixl/pixl.mjs';
         import { DemoGlyphRun } from './DemoGlyphRun.js';
-        import { init as initFontAtlas, FontAtlas } from '../../dist/release/fontAtlas-browser.js';
+        import { FontAtlas, MSDFGenerator } from '../../dist/browser/kitAtlas-browser.js';
+        import MSdfCoreFactory from '../../dist/browser/msdf-core.js';
 
         const log = (msg) => {
             console.log(msg);
@@ -241,8 +242,7 @@
 
             // Load WASM if not already
             if (!msdfGenerator) {
-                const { msdf } = await initFontAtlas(`../../dist/release/msdf-core.wasm?v=${Date.now()}`);
-                msdfGenerator = msdf;
+                msdfGenerator = await MSDFGenerator.init(MSdfCoreFactory);
                 log('WASM loaded');
             }
 
@@ -288,8 +288,7 @@
 
             // Load WASM if not already
             if (!msdfGenerator) {
-                const { msdf } = await initFontAtlas(`../../dist/release/msdf-core.wasm?v=${Date.now()}`);
-                msdfGenerator = msdf;
+                msdfGenerator = await MSDFGenerator.init(MSdfCoreFactory);
                 log('WASM loaded');
             }
 

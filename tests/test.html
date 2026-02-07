@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>fontAtlas Performance Test</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        h1 { color: #0ff; margin-bottom: 5px; }
+        .subtitle { color: #888; margin-bottom: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .panel {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .panel h2 { margin-top: 0; color: #0ff; font-size: 14px; text-transform: uppercase; }
+        label { display: block; margin: 10px 0 5px; color: #aaa; font-size: 12px; }
+        input, select, button {
+            font-family: inherit;
+            font-size: 14px;
+            padding: 8px 12px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: #0f0f23;
+            color: #fff;
+        }
+        input[type="text"], input[type="number"] { width: 100%; }
+        input[type="checkbox"] { width: auto; margin-right: 8px; }
+        select { width: 100%; }
+        button {
+            background: #0ff;
+            color: #000;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 15px;
+            width: 100%;
+        }
+        button:hover { background: #0cc; }
+        button:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .row { display: flex; gap: 15px; }
+        .row > * { flex: 1; }
+        .results {
+            font-family: monospace;
+            white-space: pre-wrap;
+            background: #0f0f23;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .results .time { color: #0f0; }
+        .results .label { color: #888; }
+        .results .header { color: #0ff; font-weight: bold; }
+        .results .workers { color: #f80; }
+        .preview {
+            margin-top: 15px;
+            text-align: center;
+        }
+        .preview canvas {
+            max-width: 100%;
+            border: 1px solid #333;
+            background: #000;
+        }
+        .drop-zone {
+            border: 2px dashed #444;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            color: #666;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #0ff;
+            color: #0ff;
+        }
+        .drop-zone.loaded {
+            border-color: #0f0;
+            color: #0f0;
+        }
+        .status { margin-top: 10px; font-size: 12px; color: #888; }
+        .checkbox-row { display: flex; align-items: center; margin-top: 10px; }
+        .checkbox-row label { margin: 0; display: flex; align-items: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>fontAtlas Performance Test</h1>
+        <p class="subtitle">MSDF/MTSDF atlas generation with parallel Web Workers</p>
+
+        <div class="panel">
+            <h2>Font</h2>
+            <div class="drop-zone" id="dropZone">
+                Drop TTF/OTF file here or click to select
+            </div>
+            <input type="file" id="fontFile" accept=".ttf,.otf" style="display:none">
+            <div class="status" id="fontStatus">No font loaded</div>
+        </div>
+
+        <div class="panel">
+            <h2>Configuration</h2>
+            <div class="row">
+                <div>
+                    <label>Characters</label>
+                    <select id="charSet">
+                        <option value="az">a-z (26)</option>
+                        <option value="AZ">A-Z (26)</option>
+                        <option value="azAZ">a-z + A-Z (52)</option>
+                        <option value="ascii" selected>ASCII 32-126 (95)</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Font Size (px)</label>
+                    <select id="fontSize">
+                        <option value="20">20</option>
+                        <option value="32">32</option>
+                        <option value="48">48</option>
+                        <option value="64" selected>64</option>
+                        <option value="96">96</option>
+                        <option value="128">128</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label>Type</label>
+                    <select id="atlasType">
+                        <option value="msdf">MSDF (3-channel)</option>
+                        <option value="mtsdf" selected>MTSDF (4-channel)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Atlas Width (px)</label>
+                    <select id="atlasWidth">
+                        <option value="256">256</option>
+                        <option value="512" selected>512</option>
+                        <option value="1024">1024</option>
+                        <option value="2048">2048</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label>Workers</label>
+                    <select id="numWorkers">
+                        <option value="0" selected>0 (Sequential)</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="6">6</option>
+                        <option value="8">8</option>
+                    </select>
+                </div>
+                <div>
+                    <div class="checkbox-row" style="margin-top: 28px;">
+                        <label>
+                            <input type="checkbox" id="workersOnly">
+                            Workers only (no main thread)
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div id="customCharsContainer" style="display:none">
+                <label>Custom Characters</label>
+                <input type="text" id="customChars" placeholder="Enter characters to include">
+            </div>
+            <button id="runBtn" disabled>Generate Atlas</button>
+        </div>
+
+        <div class="panel">
+            <h2>Variable Font Axes (optional)</h2>
+            <p style="font-size: 12px; color: #666; margin-top: 0;">For variable fonts like Inter. Leave at defaults for non-variable fonts.</p>
+            <div class="row">
+                <div>
+                    <label>Weight (wght): <span id="wghtValue">400</span></label>
+                    <input type="range" id="wghtAxis" min="100" max="900" value="400" step="1">
+                </div>
+                <div>
+                    <label>Optical Size (opsz): <span id="opszValue">14</span></label>
+                    <input type="range" id="opszAxis" min="14" max="32" value="14" step="1">
+                </div>
+            </div>
+            <div class="checkbox-row">
+                <label>
+                    <input type="checkbox" id="useVariableAxes">
+                    Apply variable axes
+                </label>
+            </div>
+            <button id="testGlyphBtn" disabled style="margin-top: 10px; background: #f80;">Test Single Glyph 'A'</button>
+            <div id="glyphPreview" style="margin-top: 10px;"></div>
+        </div>
+
+        <div class="panel">
+            <h2>Results</h2>
+            <div class="results" id="results">Waiting for font...</div>
+            <div class="preview" id="preview"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        let fontAtlasModule = null;
+        let fontAtlas = null;
+        let fontBytes = null;
+        let fontName = '';
+        let currentNumWorkers = 0;
+        let currentWorkersOnly = false;
+
+        const dropZone = document.getElementById('dropZone');
+        const fontFile = document.getElementById('fontFile');
+        const fontStatus = document.getElementById('fontStatus');
+        const charSetSelect = document.getElementById('charSet');
+        const customCharsContainer = document.getElementById('customCharsContainer');
+        const numWorkersSelect = document.getElementById('numWorkers');
+        const workersOnlyCheckbox = document.getElementById('workersOnly');
+        const runBtn = document.getElementById('runBtn');
+        const results = document.getElementById('results');
+        const preview = document.getElementById('preview');
+        const wghtAxis = document.getElementById('wghtAxis');
+        const opszAxis = document.getElementById('opszAxis');
+        const wghtValue = document.getElementById('wghtValue');
+        const opszValue = document.getElementById('opszValue');
+        const useVariableAxes = document.getElementById('useVariableAxes');
+
+        // Update axis value displays
+        wghtAxis.oninput = () => wghtValue.textContent = wghtAxis.value;
+        opszAxis.oninput = () => opszValue.textContent = opszAxis.value;
+
+        // Load fontAtlas module
+        async function loadLibrary() {
+            try {
+                fontAtlasModule = await import('./fontAtlas.browser.js');
+                log('Library loaded. Drop a font file to begin.');
+            } catch (e) {
+                log('ERROR: ' + e.message);
+                console.error(e);
+            }
+        }
+
+        // Initialize fontAtlas with current worker settings
+        async function initFontAtlas() {
+            if (!fontAtlasModule) return;
+
+            const numWorkers = parseInt(numWorkersSelect.value);
+            const workersOnly = workersOnlyCheckbox.checked;
+
+            // Reinitialize if settings changed
+            if (fontAtlas && (numWorkers !== currentNumWorkers || workersOnly !== currentWorkersOnly)) {
+                await fontAtlas.dispose();
+                fontAtlas = null;
+            }
+
+            if (!fontAtlas) {
+                fontAtlas = await fontAtlasModule.init('./msdf-core.wasm', {
+                    numWorkers,
+                    workersOnly
+                });
+                currentNumWorkers = numWorkers;
+                currentWorkersOnly = workersOnly;
+
+                // Create worker pool if using workers
+                if (numWorkers > 0 && fontBytes) {
+                    log(`Creating ${numWorkers} worker(s)...`);
+                    await fontAtlas.createWorkerPool(fontBytes);
+                    log(`Workers ready.`);
+                }
+            }
+        }
+
+        function log(msg) {
+            results.innerHTML += msg + '\n';
+            results.scrollTop = results.scrollHeight;
+        }
+
+        function clearLog() {
+            results.innerHTML = '';
+        }
+
+        // Font loading
+        dropZone.onclick = () => fontFile.click();
+
+        dropZone.ondragover = (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        };
+
+        dropZone.ondragleave = () => {
+            dropZone.classList.remove('dragover');
+        };
+
+        dropZone.ondrop = async (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) await loadFont(file);
+        };
+
+        fontFile.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (file) await loadFont(file);
+        };
+
+        async function loadFont(file) {
+            try {
+                const buffer = await file.arrayBuffer();
+                fontBytes = new Uint8Array(buffer);
+                fontName = file.name;
+                fontStatus.textContent = `${file.name} (${(buffer.byteLength / 1024).toFixed(1)} KB)`;
+                dropZone.classList.add('loaded');
+                dropZone.textContent = file.name;
+                runBtn.disabled = false;
+                document.getElementById('testGlyphBtn').disabled = false;
+                clearLog();
+                log(`Font loaded: ${file.name}`);
+                log(`Size: ${(buffer.byteLength / 1024).toFixed(1)} KB`);
+
+                // Reset fontAtlas to reload with new font
+                if (fontAtlas) {
+                    await fontAtlas.dispose();
+                    fontAtlas = null;
+                }
+            } catch (e) {
+                fontStatus.textContent = 'Error loading font: ' + e.message;
+            }
+        }
+
+        // Test single glyph with variable axes
+        document.getElementById('testGlyphBtn').onclick = async () => {
+            if (!fontAtlasModule || !fontBytes) return;
+
+            const btn = document.getElementById('testGlyphBtn');
+            btn.disabled = true;
+
+            try {
+                // Initialize if needed (no workers for single glyph test)
+                if (!fontAtlas) {
+                    fontAtlas = await fontAtlasModule.init('./msdf-core.wasm', { numWorkers: 0 });
+                    currentNumWorkers = 0;
+                    currentWorkersOnly = false;
+                }
+
+                fontAtlas.msdf.loadFont(fontBytes);
+
+                const wght = parseInt(wghtAxis.value);
+                const opsz = parseInt(opszAxis.value);
+                const applyAxes = useVariableAxes.checked;
+
+                // Generate glyph
+                let glyph;
+                if (applyAxes) {
+                    fontAtlas.msdf.setVariationAxes([
+                        { tag: 'wght', value: wght },
+                        { tag: 'opsz', value: opsz }
+                    ]);
+                    glyph = fontAtlas.msdf.generateMTSDFVar(65, 64, 8); // 'A'
+                } else {
+                    glyph = fontAtlas.msdf.generateMTSDF(65, 64, 8);
+                }
+
+                if (!glyph) {
+                    log('Failed to generate glyph');
+                    btn.disabled = false;
+                    return;
+                }
+
+                log(`Glyph 'A': ${glyph.metrics.width}x${glyph.metrics.height}, advance=${glyph.metrics.advance.toFixed(2)}`);
+                if (applyAxes) {
+                    log(`  (wght=${wght}, opsz=${opsz})`);
+                }
+
+                // Display the glyph
+                const glyphPreview = document.getElementById('glyphPreview');
+                glyphPreview.innerHTML = '';
+                const canvas = document.createElement('canvas');
+                canvas.width = glyph.metrics.width;
+                canvas.height = glyph.metrics.height;
+                canvas.style.border = '1px solid #333';
+                canvas.style.background = '#000';
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.createImageData(glyph.metrics.width, glyph.metrics.height);
+
+                // Convert float MTSDF to RGBA
+                for (let i = 0; i < glyph.metrics.width * glyph.metrics.height; i++) {
+                    const r = Math.max(0, Math.min(255, glyph.pixels[i * 4 + 0] * 255));
+                    const g = Math.max(0, Math.min(255, glyph.pixels[i * 4 + 1] * 255));
+                    const b = Math.max(0, Math.min(255, glyph.pixels[i * 4 + 2] * 255));
+                    const a = Math.max(0, Math.min(255, glyph.pixels[i * 4 + 3] * 255));
+                    imageData.data[i * 4 + 0] = r;
+                    imageData.data[i * 4 + 1] = g;
+                    imageData.data[i * 4 + 2] = b;
+                    imageData.data[i * 4 + 3] = 255;
+                }
+                ctx.putImageData(imageData, 0, 0);
+                glyphPreview.appendChild(canvas);
+
+            } catch (e) {
+                log('ERROR: ' + e.message);
+                console.error(e);
+            }
+
+            btn.disabled = false;
+        };
+
+        // Character set
+        charSetSelect.onchange = () => {
+            customCharsContainer.style.display =
+                charSetSelect.value === 'custom' ? 'block' : 'none';
+        };
+
+        function getChars() {
+            const set = charSetSelect.value;
+            switch (set) {
+                case 'az': return Array.from({length: 26}, (_, i) => 97 + i);
+                case 'AZ': return Array.from({length: 26}, (_, i) => 65 + i);
+                case 'azAZ': return [
+                    ...Array.from({length: 26}, (_, i) => 97 + i),
+                    ...Array.from({length: 26}, (_, i) => 65 + i)
+                ];
+                case 'ascii': return Array.from({length: 95}, (_, i) => 32 + i);
+                case 'custom':
+                    const txt = document.getElementById('customChars').value;
+                    return [...new Set(txt)].map(c => c.charCodeAt(0));
+                default: return [];
+            }
+        }
+
+        // Run generation
+        runBtn.onclick = async () => {
+            if (!fontAtlasModule || !fontBytes) return;
+
+            runBtn.disabled = true;
+            clearLog();
+
+            const chars = getChars();
+            const fontSize = parseInt(document.getElementById('fontSize').value);
+            const atlasType = document.getElementById('atlasType').value;
+            const atlasWidth = parseInt(document.getElementById('atlasWidth').value);
+            const numWorkers = parseInt(numWorkersSelect.value);
+            const workersOnly = workersOnlyCheckbox.checked;
+
+            const applyAxes = useVariableAxes.checked;
+            const wght = parseInt(wghtAxis.value);
+            const opsz = parseInt(opszAxis.value);
+
+            log(`<span class="header">Configuration</span>`);
+            log(`  Font: ${fontName}`);
+            log(`  Characters: ${chars.length}`);
+            log(`  Font size: ${fontSize}px`);
+            log(`  Type: ${atlasType.toUpperCase()}`);
+            log(`  Atlas width: ${atlasWidth}px`);
+            log(`  <span class="workers">Workers: ${numWorkers}${workersOnly ? ' (workers only)' : ''}</span>`);
+            if (applyAxes) {
+                log(`  Variable axes: wght=${wght}, opsz=${opsz}`);
+            }
+            log('');
+
+            try {
+                // Initialize/reinitialize if needed
+                await initFontAtlas();
+
+                log(`<span class="header">Generating...</span>`);
+
+                const result = await fontAtlas.atlas.generate(
+                    fontBytes, chars, fontSize, 4, atlasWidth, atlasType
+                );
+
+                const t = result.timing;
+                log('');
+                log(`<span class="header">Results</span>`);
+                log(`  Atlas: ${result.width} x ${result.height}px`);
+                log(`  Glyphs: ${t.glyphCount}`);
+                log(`  <span class="workers">Workers used: ${t.numWorkers}</span>`);
+                log('');
+                log(`<span class="header">Timing</span>`);
+                log(`  <span class="label">Total:</span>        <span class="time">${t.totalMs.toFixed(1)}ms</span>`);
+                log(`  <span class="label">Glyph gen:</span>    <span class="time">${t.glyphGenMs.toFixed(1)}ms</span>`);
+                log(`  <span class="label">Layout:</span>       <span class="time">${t.layoutMs.toFixed(2)}ms</span>`);
+                log(`  <span class="label">Stitch:</span>       <span class="time">${t.stitchMs.toFixed(2)}ms</span>`);
+                log('');
+                log(`  <span class="label">Per glyph (median):</span> <span class="time">${t.medianGlyphMs.toFixed(2)}ms</span>`);
+                log(`  <span class="label">Per glyph (avg):</span>    <span class="time">${t.avgGlyphMs.toFixed(2)}ms</span>`);
+
+                // Show preview
+                displayAtlas(result);
+
+            } catch (e) {
+                log('ERROR: ' + e.message);
+                console.error(e);
+            }
+
+            runBtn.disabled = false;
+        };
+
+        function displayAtlas(result) {
+            preview.innerHTML = '';
+            const canvas = document.createElement('canvas');
+            canvas.width = result.width;
+            canvas.height = result.height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(result.width, result.height);
+            imageData.data.set(result.image);
+            ctx.putImageData(imageData, 0, 0);
+            preview.appendChild(canvas);
+        }
+
+        // Initialize
+        loadLibrary();
+    </script>
+</body>
+</html>

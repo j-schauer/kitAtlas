@@ -53,6 +53,18 @@ build:
       cp src/shaders.js ${TARGET}/
       cp docs/api.md ${TARGET}/
 
+  browser:
+    - |
+      @deps
+      mkdir -p ${TARGET}
+      # Bundle for browser (uses browser-specific worker-pool)
+      npx esbuild src/index-browser.ts --bundle --format=esm --platform=browser --target=es2020 \
+        --outfile=${TARGET}/kitAtlas-browser.js
+      # Copy kitMSDF artifacts
+      cp lib/kitMSDF/msdf-core.js lib/kitMSDF/msdf-core.wasm ${TARGET}/
+      # Copy assets for examples
+      cp -r example/assets ${TARGET}/
+
 run:
   test:
     - |

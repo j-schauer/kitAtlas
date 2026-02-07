@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<!--
+  MSDF Shader Test Harness - WebGL2 / WebGPU
+
+  REQUIREMENTS:
+  - ../shaders.js (imports msdfVertGLSL, msdfFragGLSL, msdfWGSL)
+  - ../assets/atlas.png (MSDF) or ../assets/atlas_mtsdf.png (MTSDF)
+  - ../assets/atlas.json or ../assets/atlas_mtsdf.json
+  - Run via http-server: npx http-server . -p 8000 --cors
+  - Open: http://localhost:8000/demo/glyph/
+-->
+<html>
+<head>
+    <title>MSDF Shader Test</title>
+    <style>
+        body { background: #222; color: #fff; font-family: monospace; display: flex; height: 100vh; margin: 0; }
+        .canvas-container { flex: 1; display: flex; justify-content: center; align-items: center; background: #111; }
+        canvas { border: 1px solid #555; background: #000; }
+        .controls { width: 300px; padding: 20px; background: #333; overflow-y: auto; border-left: 1px solid #444; }
+        .control-group { margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        label { display: block; margin-bottom: 5px; cursor: pointer; user-select: none; }
+        input[type=range] { width: 100%; }
+        select { width: 100%; margin-bottom: 10px; background: #444; color: #fff; border: 1px solid #555; padding: 5px; }
+        .val { float: right; color: #8f8; }
+        .api-toggle { background: #004; padding: 10px; border: 2px solid #08f; margin-bottom: 15px; }
+        .api-toggle label { color: #8cf; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="canvas-container">
+        <canvas id="canvas" width="800" height="600"></canvas>
+    </div>
+    <div class="controls">
+        <h3>Controls</h3>
+
+        <div class="control-group api-toggle">
+            <label>Rendering API</label>
+            <select id="apiSelect">
+                <option value="webgl2">WebGL2</option>
+                <option value="webgpu">WebGPU (raw)</option>
+                <option value="pixi-webgpu">Pixi WebGPU</option>
+            </select>
+            <div id="apiStatus" style="font-size: 11px; color: #888;"></div>
+        </div>
+
+        <div class="control-group">
+            <label>Texture Source</label>
+            <select id="textureSrc">
+                <option value="msdf">MSDF (atlas.png)</option>
+                <option value="mtsdf">MTSDF (atlas_mtsdf.png)</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label style="color:#ff0">Debug Mode</label>
+            <label><input type="radio" name="debugMode" value="0" checked> Normal</label>
+            <label><input type="radio" name="debugMode" value="1"> Solid Fill</label>
+            <label><input type="radio" name="debugMode" value="2"> X Pattern</label>
+            <label><input type="radio" name="debugMode" value="3"> Raw Texture</label>
+        </div>
+
+        <div class="control-group">
+            <label><input type="checkbox" id="useAlpha"> Use Alpha (MTSDF mode)</label>
+        </div>
+
+        <div class="control-group">
+            <label>Softness <span id="smoothingVal" class="val">1.0</span></label>
+            <input type="range" id="smoothing" min="0.5" max="4.0" step="0.1" value="1.0">
+        </div>
+
+        <div class="control-group">
+            <label>Weight <span id="weightVal" class="val">0</span></label>
+            <input type="range" id="weight" min="-1.0" max="1.0" step="0.01" value="0">
+        </div>
+
+        <div class="control-group">
+            <label>Size <span id="sizeVal" class="val">200px</span></label>
+            <input type="range" id="size" min="10" max="800" value="200">
+        </div>
+
+        <div class="control-group">
+            <label><input type="checkbox" id="showBounds" checked> Show Glyph Bounds</label>
+        </div>
+
+        <div class="control-group" style="border-top: 2px solid #ff0; padding-top: 10px;">
+            <label style="color:#ff0"><input type="checkbox" id="fancyEnable"> Enable Fancy Features</label>
+        </div>
+
+        <div class="control-group" id="fancyControls" style="opacity: 0.5;">
+            <label><input type="checkbox" id="showMedian"> Show Median Field</label>
+            <div style="margin-top: 10px; color: #f88;">Outline</div>
+            <label><input type="checkbox" id="outlineOn"> Outline On</label>
+            <label>Width <span id="outlineWidthVal" class="val">0</span></label>
+            <input type="range" id="outlineWidth" min="0" max="10" step="0.5" value="0">
+            <label>Color <input type="color" id="outlineColor" value="#000000" style="width:50px;height:20px;vertical-align:middle;"></label>
+            <div style="margin-top: 10px; color: #f88;">Glow/Shadow</div>
+            <label><input type="checkbox" id="glowOn"> Glow On</label>
+            <label>Color <input type="color" id="glowColor" value="#0088ff" style="width:50px;height:20px;vertical-align:middle;"></label>
+            <label>Radius <span id="glowRadiusVal" class="val">0</span></label>
+            <input type="range" id="glowRadius" min="0" max="20" step="1" value="0">
+            <label>Alpha <span id="glowAlphaVal" class="val">0.5</span></label>
+            <input type="range" id="glowAlpha" min="0" max="1" step="0.1" value="0.5">
+            <label>Diffusion <span id="glowDiffusionVal" class="val">2</span></label>
+            <input type="range" id="glowDiffusion" min="0" max="5" step="0.5" value="2">
+            <label>Offset X <span id="glowOffsetXVal" class="val">0</span></label>
+            <input type="range" id="glowOffsetX" min="-50" max="50" step="5" value="0">
+            <label>Offset Y <span id="glowOffsetYVal" class="val">0</span></label>
+            <input type="range" id="glowOffsetY" min="-50" max="50" step="5" value="0">
+            <div style="margin-top: 10px; color: #f88;">Blur</div>
+            <label><input type="checkbox" id="blurOn"> Blur On</label>
+            <label>Amount <span id="charBlurVal" class="val">0</span></label>
+            <input type="range" id="charBlur" min="0" max="10" step="0.1" value="0">
+        </div>
+
+        <div class="control-group">
+            <label>Character</label>
+            <select id="charSelect"></select>
+        </div>
+
+        <div class="control-group" id="metricsPanel" style="background: #222; padding: 10px; font-size: 11px;">
+            <div style="color: #ff0; margin-bottom: 5px;">BMFont Metrics</div>
+            <div id="metricsDisplay"></div>
+        </div>
+
+        <div id="log" style="color: #aaa; font-size: 12px; margin-top: 10px;"></div>
+    </div>
+
+    <script type="module">
+        import { msdfVertGLSL, msdfFragGLSL, msdfWGSL } from '../../src/shaders.js';
+        import * as PIXI from '../../lib/pixl/pixl.mjs';
+
+        const logDiv = document.getElementById('log');
+        const log = (msg) => {
+            console.log(msg);
+            logDiv.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}<br>` + logDiv.innerHTML;
+        };
+
+        // Shared state
+        const state = {
+            api: 'webgl2',
+            debugMode: 0,
+            size: 200,
+            smoothing: 1.0,
+            weight: 0,
+            useAlpha: 0.0,
+            showBounds: true,
+            charCode: 65,
+            fancyEnable: 0.0,
+            showMedian: 0.0,
+            outlineOn: 0.0,
+            outlineWidth: 0.0,
+            outlineColor: [0.0, 0.0, 0.0, 1.0],
+            glowOn: 0.0,
+            glowColor: [0.0, 0.53, 1.0, 1.0],
+            glowRadius: 0.0,
+            glowAlpha: 0.5,
+            glowDiffusion: 2.0,
+            glowOffsetX: 0.0,
+            glowOffsetY: 0.0,
+            blurOn: 0.0,
+            charBlur: 0.0
+        };
+
+        let currentAtlas = 'msdf';
+        let jsons = {};
+        let renderer = null;
+        let animationFrameId = null;
+
+        // ===================== WebGL2 Renderer =====================
+        class WebGL2Renderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.gl = canvas.getContext('webgl2');
+                if (!this.gl) throw new Error('WebGL2 not supported');
+                this.textures = {};
+                this.program = null;
+                this.borderProgram = null;
+                this.pBuf = null;
+                this.uvBuf = null;
+                this.borderBuf = null;
+            }
+
+            async init() {
+                const gl = this.gl;
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+                this.program = this.createProgram(msdfVertGLSL, msdfFragGLSL);
+
+                const borderVS = `#version 300 es
+                    in vec2 a_position;
+                    void main() { gl_Position = vec4(a_position, 0.0, 1.0); }`;
+                const borderFS = `#version 300 es
+                    precision mediump float;
+                    uniform vec4 u_borderColor;
+                    out vec4 outColor;
+                    void main() { outColor = u_borderColor; }`;
+                this.borderProgram = this.createProgram(borderVS, borderFS);
+
+                const positions = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+                this.pBuf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.pBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+                const borderPositions = new Float32Array([-1,-1, 1,-1, 1,1, -1,1]);
+                this.borderBuf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.borderBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, borderPositions, gl.STATIC_DRAW);
+
+                this.uvBuf = gl.createBuffer();
+                log('WebGL2 initialized');
+            }
+
+            async loadTexture(type, img) {
+                const gl = this.gl;
+                const tex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                this.textures[type] = tex;
+            }
+
+            updateUVs(u0, v0, u1, v1) {
+                const gl = this.gl;
+                const uvs = new Float32Array([u0,v0, u1,v0, u0,v1, u1,v1]);
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
+            }
+
+            draw() {
+                const gl = this.gl;
+                const cx = (this.canvas.width - state.size) / 2;
+                const cy = (this.canvas.height - state.size) / 2;
+
+                gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                gl.clearColor(state.showBounds ? 0.0 : 0.0, state.showBounds ? 0.4 : 0.0, 0.0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.viewport(cx, cy, state.size, state.size);
+
+                gl.useProgram(this.program);
+
+                const aPos = gl.getAttribLocation(this.program, 'aPosition');
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.pBuf);
+                gl.enableVertexAttribArray(aPos);
+                gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+                const aUV = gl.getAttribLocation(this.program, 'aUV');
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuf);
+                gl.enableVertexAttribArray(aUV);
+                gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 0, 0);
+
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, this.textures[currentAtlas]);
+
+                // Pixi-compatible matrix uniforms (identity for standalone)
+                const identity = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
+                gl.uniformMatrix3fv(gl.getUniformLocation(this.program, 'uProjectionMatrix'), false, identity);
+                gl.uniformMatrix3fv(gl.getUniformLocation(this.program, 'uWorldTransformMatrix'), false, identity);
+
+                gl.uniform4f(gl.getUniformLocation(this.program, 'uColor'), 1, 1, 1, 1);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uSmoothing'), state.smoothing);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uWeight'), state.weight);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uUseAlpha'), state.useAlpha);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uPxRange'), 8.0);
+                gl.uniform1i(gl.getUniformLocation(this.program, 'uDebugMode'), state.debugMode);
+                gl.uniform4f(gl.getUniformLocation(this.program, 'uDebugColor'), 1, 0, 1, 1);
+                gl.uniform4f(gl.getUniformLocation(this.program, 'uViewport'), cx, cy, state.size, state.size);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uFancyEnable'), state.fancyEnable);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uShowMedian'), state.showMedian);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uOutlineOnOff'), state.outlineOn);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uOutlineWidth'), state.outlineWidth);
+                gl.uniform4f(gl.getUniformLocation(this.program, 'uOutlineColor'), state.outlineColor[0], state.outlineColor[1], state.outlineColor[2], state.outlineColor[3]);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uGlowOnOff'), state.glowOn);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uGlowRadius'), state.glowRadius);
+                gl.uniform4f(gl.getUniformLocation(this.program, 'uGlowColor'), state.glowColor[0], state.glowColor[1], state.glowColor[2], state.glowColor[3]);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uGlowAlpha'), state.glowAlpha);
+                gl.uniform2f(gl.getUniformLocation(this.program, 'uGlowOffset'), state.glowOffsetX, state.glowOffsetY);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uGlowDiffusion'), state.glowDiffusion);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uBlurOnOff'), state.blurOn);
+                gl.uniform1f(gl.getUniformLocation(this.program, 'uCharBlur'), state.charBlur);
+
+                const json = jsons[currentAtlas];
+                gl.uniform2f(gl.getUniformLocation(this.program, 'uTexSize'), json.common.scaleW, json.common.scaleH);
+
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                if (state.showBounds) {
+                    gl.useProgram(this.borderProgram);
+                    const aBorderPos = gl.getAttribLocation(this.borderProgram, 'a_position');
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this.borderBuf);
+                    gl.enableVertexAttribArray(aBorderPos);
+                    gl.vertexAttribPointer(aBorderPos, 2, gl.FLOAT, false, 0, 0);
+                    gl.uniform4f(gl.getUniformLocation(this.borderProgram, 'u_borderColor'), 1, 0, 1, 1);
+                    gl.drawArrays(gl.LINE_LOOP, 0, 4);
+                }
+            }
+
+            createProgram(vs, fs) {
+                const gl = this.gl;
+                const p = gl.createProgram();
+                const v = this.compileShader(gl.VERTEX_SHADER, vs);
+                const f = this.compileShader(gl.FRAGMENT_SHADER, fs);
+                gl.attachShader(p, v);
+                gl.attachShader(p, f);
+                gl.linkProgram(p);
+                if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+                return p;
+            }
+
+            compileShader(type, src) {
+                const gl = this.gl;
+                const s = gl.createShader(type);
+                gl.shaderSource(s, src);
+                gl.compileShader(s);
+                if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+                return s;
+            }
+
+            dispose() {
+                // Cleanup if needed
+            }
+        }
+
+        // ===================== WebGPU Renderer =====================
+        // Uses Pixi-compatible binding layout:
+        //   @group(0) - GlobalUniforms (identity matrices for standalone)
+        //   @group(1) - Custom uniforms, texture, sampler
+        class WebGPURenderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.device = null;
+                this.context = null;
+                this.pipeline = null;
+                this.textures = {};
+                this.globalUniformBuffer = null;  // @group(0) - Pixi GlobalUniforms
+                this.uniformBuffer = null;        // @group(1) - Custom uniforms
+                this.vertexBuffer = null;
+                this.uvBuffers = {};
+                this.globalBindGroup = null;      // @group(0)
+                this.customBindGroups = {};       // @group(1) per texture
+                this.samplers = {};
+            }
+
+            async init() {
+                if (!navigator.gpu) throw new Error('WebGPU not supported');
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) throw new Error('No GPU adapter found');
+                this.device = await adapter.requestDevice();
+
+                this.context = this.canvas.getContext('webgpu');
+                const format = navigator.gpu.getPreferredCanvasFormat();
+                this.context.configure({ device: this.device, format, alphaMode: 'premultiplied' });
+
+                const shaderModule = this.device.createShaderModule({ code: msdfWGSL });
+
+                // @group(0): GlobalUniforms - projection + world transform + color + resolution
+                // Layout: mat3x3f (48) + mat3x3f (48) + vec4f (16) + vec2f (8) + padding (8) = 128 bytes
+                this.globalUniformBuffer = this.device.createBuffer({
+                    size: 128,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+                });
+                const globalData = new Float32Array(32);
+                // uProjectionMatrix - identity (column-major, padded to vec4f per column)
+                globalData[0] = 1; globalData[1] = 0; globalData[2] = 0; globalData[3] = 0;  // col 0
+                globalData[4] = 0; globalData[5] = 1; globalData[6] = 0; globalData[7] = 0;  // col 1
+                globalData[8] = 0; globalData[9] = 0; globalData[10] = 1; globalData[11] = 0; // col 2
+                // uWorldTransformMatrix - identity
+                globalData[12] = 1; globalData[13] = 0; globalData[14] = 0; globalData[15] = 0;
+                globalData[16] = 0; globalData[17] = 1; globalData[18] = 0; globalData[19] = 0;
+                globalData[20] = 0; globalData[21] = 0; globalData[22] = 1; globalData[23] = 0;
+                // uWorldColorAlpha
+                globalData[24] = 1; globalData[25] = 1; globalData[26] = 1; globalData[27] = 1;
+                // uResolution + padding
+                globalData[28] = this.canvas.width; globalData[29] = this.canvas.height;
+                globalData[30] = 0; globalData[31] = 0;
+                this.device.queue.writeBuffer(this.globalUniformBuffer, 0, globalData);
+
+                // @group(1): Custom uniforms
+                this.uniformBuffer = this.device.createBuffer({
+                    size: 256,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+                });
+
+                const positions = new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]);
+                this.vertexBuffer = this.device.createBuffer({
+                    size: positions.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(this.vertexBuffer, 0, positions);
+
+                // Bind group layout for @group(0) - GlobalUniforms
+                const globalBindGroupLayout = this.device.createBindGroupLayout({
+                    entries: [
+                        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }
+                    ]
+                });
+
+                // Bind group layout for @group(1) - Custom uniforms + texture + sampler
+                const customBindGroupLayout = this.device.createBindGroupLayout({
+                    entries: [
+                        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+                        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+                        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } }
+                    ]
+                });
+
+                const pipelineLayout = this.device.createPipelineLayout({
+                    bindGroupLayouts: [globalBindGroupLayout, customBindGroupLayout]
+                });
+
+                this.pipeline = this.device.createRenderPipeline({
+                    layout: pipelineLayout,
+                    vertex: {
+                        module: shaderModule,
+                        entryPoint: 'vs_main',
+                        buffers: [
+                            { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
+                            { arrayStride: 8, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }] }
+                        ]
+                    },
+                    fragment: {
+                        module: shaderModule,
+                        entryPoint: 'fs_main',
+                        targets: [{ format, blend: {
+                            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+                            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
+                        }}]
+                    },
+                    primitive: { topology: 'triangle-list' }
+                });
+
+                // Create global bind group (@group(0))
+                this.globalBindGroup = this.device.createBindGroup({
+                    layout: globalBindGroupLayout,
+                    entries: [
+                        { binding: 0, resource: { buffer: this.globalUniformBuffer } }
+                    ]
+                });
+
+                this.customBindGroupLayout = customBindGroupLayout;
+                log('WebGPU initialized (Pixi-compatible binding layout)');
+            }
+
+            async loadTexture(type, img) {
+                const texture = this.device.createTexture({
+                    size: [img.width, img.height],
+                    format: 'rgba8unorm',
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+                });
+
+                const imageBitmap = await createImageBitmap(img, { imageOrientation: 'flipY' });
+                this.device.queue.copyExternalImageToTexture(
+                    { source: imageBitmap },
+                    { texture },
+                    [img.width, img.height]
+                );
+
+                this.textures[type] = texture;
+
+                const sampler = this.device.createSampler({
+                    magFilter: 'linear',
+                    minFilter: 'linear',
+                    addressModeU: 'clamp-to-edge',
+                    addressModeV: 'clamp-to-edge'
+                });
+                this.samplers[type] = sampler;
+
+                this.uvBuffers[type] = this.device.createBuffer({
+                    size: 48,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                });
+
+                // Custom bind group (@group(1)) for this texture
+                this.customBindGroups[type] = this.device.createBindGroup({
+                    layout: this.customBindGroupLayout,
+                    entries: [
+                        { binding: 0, resource: { buffer: this.uniformBuffer } },
+                        { binding: 1, resource: texture.createView() },
+                        { binding: 2, resource: sampler }
+                    ]
+                });
+            }
+
+            updateUVs(u0, v0, u1, v1) {
+                const uvs = new Float32Array([u0,v0, u1,v0, u0,v1, u0,v1, u1,v0, u1,v1]);
+                this.device.queue.writeBuffer(this.uvBuffers[currentAtlas], 0, uvs);
+            }
+
+            draw() {
+                const json = jsons[currentAtlas];
+                const cx = (this.canvas.width - state.size) / 2;
+                const cy = (this.canvas.height - state.size) / 2;
+
+                const uniforms = new ArrayBuffer(256);
+                const f32 = new Float32Array(uniforms);
+                const i32 = new Int32Array(uniforms);
+
+                // Pack uniforms to match WGSL Uniforms struct (@group(1))
+                f32[0] = 1; f32[1] = 1; f32[2] = 1; f32[3] = 1;  // color
+                f32[4] = 1; f32[5] = 0; f32[6] = 1; f32[7] = 1;  // debugColor
+                f32[8] = cx; f32[9] = cy; f32[10] = state.size; f32[11] = state.size;  // viewport
+                f32[12] = state.outlineColor[0]; f32[13] = state.outlineColor[1]; f32[14] = state.outlineColor[2]; f32[15] = state.outlineColor[3];  // outlineColor
+                f32[16] = state.glowColor[0]; f32[17] = state.glowColor[1]; f32[18] = state.glowColor[2]; f32[19] = state.glowColor[3];  // glowColor
+                f32[20] = state.glowOffsetX; f32[21] = state.glowOffsetY;  // glowOffset
+                f32[22] = json.common.scaleW; f32[23] = json.common.scaleH;  // texSize
+                f32[24] = state.smoothing;
+                f32[25] = state.weight;
+                f32[26] = state.useAlpha;
+                f32[27] = 8.0;  // pxRange
+                f32[28] = state.fancyEnable;
+                f32[29] = state.showMedian;
+                f32[30] = state.outlineOn;
+                f32[31] = state.outlineWidth;
+                f32[32] = state.glowOn;
+                f32[33] = state.glowRadius;
+                f32[34] = state.glowAlpha;
+                f32[35] = state.glowDiffusion;
+                f32[36] = state.blurOn;
+                f32[37] = state.charBlur;
+                i32[38] = state.debugMode;
+
+                this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
+
+                const commandEncoder = this.device.createCommandEncoder();
+                const textureView = this.context.getCurrentTexture().createView();
+
+                const renderPass = commandEncoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: textureView,
+                        clearValue: state.showBounds ? { r: 0, g: 0.4, b: 0, a: 1 } : { r: 0, g: 0, b: 0, a: 1 },
+                        loadOp: 'clear',
+                        storeOp: 'store'
+                    }]
+                });
+
+                renderPass.setPipeline(this.pipeline);
+                renderPass.setBindGroup(0, this.globalBindGroup);           // @group(0) - GlobalUniforms
+                renderPass.setBindGroup(1, this.customBindGroups[currentAtlas]);  // @group(1) - Custom
+                renderPass.setVertexBuffer(0, this.vertexBuffer);
+                renderPass.setVertexBuffer(1, this.uvBuffers[currentAtlas]);
+                renderPass.setViewport(cx, cy, state.size, state.size, 0, 1);
+                renderPass.draw(6);
+                renderPass.end();
+
+                this.device.queue.submit([commandEncoder.finish()]);
+            }
+
+            dispose() {
+                // Cleanup
+            }
+        }
+
+        // ===================== Pixi WebGPU Renderer =====================
+        // Tests the shader through Pixi.js v8's WebGPU pipeline.
+        // This validates that Pixi can parse our WGSL and bind resources correctly.
+        class PixiWebGPURenderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.app = null;
+                this.mesh = null;
+                this.textures = {};
+                this.geometry = null;
+                this.shader = null;
+                this.uniforms = null;
+            }
+
+            async init() {
+                // Create Pixi app with WebGPU preference
+                this.app = new PIXI.Application();
+                await this.app.init({
+                    canvas: this.canvas,
+                    width: this.canvas.width,
+                    height: this.canvas.height,
+                    preference: 'webgpu',
+                    backgroundColor: 0x000000,
+                    clearBeforeRender: true
+                });
+
+                if (this.app.renderer.type !== PIXI.RendererType.WEBGPU) {
+                    throw new Error('WebGPU not available, got: ' + this.app.renderer.type);
+                }
+
+                // Add a small colored rectangle in corner to verify Pixi is working
+                const indicator = new PIXI.Graphics();
+                indicator.rect(10, 10, 30, 30);
+                indicator.fill(0x00ff00);
+                this.app.stage.addChild(indicator);
+
+                log('Pixi WebGPU initialized (green square = Pixi working)');
+            }
+
+            async loadTexture(type, img) {
+                const texture = PIXI.Texture.from(img);
+                this.textures[type] = texture;
+                log(`Pixi texture loaded: ${type} (${img.width}x${img.height})`);
+            }
+
+            updateUVs(u0, v0, u1, v1) {
+                // Recreate mesh with new UVs
+                if (this.mesh) {
+                    this.app.stage.removeChild(this.mesh);
+                    this.mesh.destroy();
+                    this.mesh = null;
+                }
+
+                const texture = this.textures[currentAtlas];
+                if (!texture) return;
+
+                // Create geometry - quad with positions and UVs
+                // Positions in pixels, will be transformed by Pixi
+                const size = state.size;
+                const cx = (this.canvas.width - size) / 2;
+                const cy = (this.canvas.height - size) / 2;
+
+                const positions = new Float32Array([
+                    cx, cy,           // TL
+                    cx + size, cy,    // TR
+                    cx + size, cy + size,  // BR
+                    cx, cy + size     // BL
+                ]);
+
+                // UVs - note V is flipped for Pixi
+                const uvs = new Float32Array([
+                    u0, 1-v1,  // TL
+                    u1, 1-v1,  // TR
+                    u1, 1-v0,  // BR
+                    u0, 1-v0   // BL
+                ]);
+
+                const indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
+
+                this.geometry = new PIXI.MeshGeometry({
+                    positions,
+                    uvs,
+                    indices
+                });
+
+                // Create uniforms group
+                const json = jsons[currentAtlas];
+                this.uniforms = new PIXI.UniformGroup({
+                    uColor: { value: [1.0, 1.0, 1.0, 1.0], type: 'vec4<f32>' },
+                    uDebugColor: { value: [1.0, 0.0, 1.0, 1.0], type: 'vec4<f32>' },
+                    uViewport: { value: [cx, cy, size, size], type: 'vec4<f32>' },
+                    uOutlineColor: { value: state.outlineColor, type: 'vec4<f32>' },
+                    uGlowColor: { value: state.glowColor, type: 'vec4<f32>' },
+                    uGlowOffset: { value: [state.glowOffsetX, state.glowOffsetY], type: 'vec2<f32>' },
+                    uTexSize: { value: [json.common.scaleW, json.common.scaleH], type: 'vec2<f32>' },
+                    uSmoothing: { value: state.smoothing, type: 'f32' },
+                    uWeight: { value: state.weight, type: 'f32' },
+                    uUseAlpha: { value: state.useAlpha, type: 'f32' },
+                    uPxRange: { value: 8.0, type: 'f32' },
+                    uFancyEnable: { value: state.fancyEnable, type: 'f32' },
+                    uShowMedian: { value: state.showMedian, type: 'f32' },
+                    uOutlineOnOff: { value: state.outlineOn, type: 'f32' },
+                    uOutlineWidth: { value: state.outlineWidth, type: 'f32' },
+                    uGlowOnOff: { value: state.glowOn, type: 'f32' },
+                    uGlowRadius: { value: state.glowRadius, type: 'f32' },
+                    uGlowAlpha: { value: state.glowAlpha, type: 'f32' },
+                    uGlowDiffusion: { value: state.glowDiffusion, type: 'f32' },
+                    uBlurOnOff: { value: state.blurOn, type: 'f32' },
+                    uCharBlur: { value: state.charBlur, type: 'f32' },
+                    uDebugMode: { value: state.debugMode, type: 'i32' },
+                    _pad: { value: [0, 0], type: 'vec2<f32>' },  // Must match WGSL struct padding
+                });
+
+                // Use the exported MSDF shader from shaders.js (msdfWGSL)
+                // Uniforms must match the struct order in msdfWGSL
+                this.uniforms = new PIXI.UniformGroup({
+                    uColor: { value: [1.0, 1.0, 1.0, 1.0], type: 'vec4<f32>' },
+                    uDebugColor: { value: [1.0, 0.0, 1.0, 1.0], type: 'vec4<f32>' },
+                    uViewport: { value: [cx, cy, size, size], type: 'vec4<f32>' },
+                    uOutlineColor: { value: state.outlineColor, type: 'vec4<f32>' },
+                    uGlowColor: { value: state.glowColor, type: 'vec4<f32>' },
+                    uGlowOffset: { value: [state.glowOffsetX, state.glowOffsetY], type: 'vec2<f32>' },
+                    uTexSize: { value: [json.common.scaleW, json.common.scaleH], type: 'vec2<f32>' },
+                    uSmoothing: { value: state.smoothing, type: 'f32' },
+                    uWeight: { value: state.weight, type: 'f32' },
+                    uUseAlpha: { value: state.useAlpha, type: 'f32' },
+                    uPxRange: { value: 8.0, type: 'f32' },
+                    uFancyEnable: { value: state.fancyEnable, type: 'f32' },
+                    uShowMedian: { value: state.showMedian, type: 'f32' },
+                    uOutlineOnOff: { value: state.outlineOn, type: 'f32' },
+                    uOutlineWidth: { value: state.outlineWidth, type: 'f32' },
+                    uGlowOnOff: { value: state.glowOn, type: 'f32' },
+                    uGlowRadius: { value: state.glowRadius, type: 'f32' },
+                    uGlowAlpha: { value: state.glowAlpha, type: 'f32' },
+                    uGlowDiffusion: { value: state.glowDiffusion, type: 'f32' },
+                    uBlurOnOff: { value: state.blurOn, type: 'f32' },
+                    uCharBlur: { value: state.charBlur, type: 'f32' },
+                    uDebugMode: { value: state.debugMode, type: 'i32' },
+                    _pad: { value: [0, 0, 0], type: 'vec3<f32>' },
+                });
+
+                // Create GpuProgram using exported shader
+                const gpuProgram = PIXI.GpuProgram.from({
+                    vertex: { source: msdfWGSL, entryPoint: 'vs_main' },
+                    fragment: { source: msdfWGSL, entryPoint: 'fs_main' }
+                });
+
+                this.shader = new PIXI.Shader({
+                    gpuProgram,
+                    resources: {
+                        u: this.uniforms,
+                        uTexture: texture.source,
+                        uSampler: texture.source.style
+                    }
+                });
+
+                // Create mesh
+                this.mesh = new PIXI.Mesh({
+                    geometry: this.geometry,
+                    shader: this.shader
+                });
+
+                this.app.stage.addChild(this.mesh);
+            }
+
+            draw() {
+                if (!this.uniforms) return;
+
+                // Update uniforms
+                const u = this.uniforms.uniforms;
+                u.uSmoothing = state.smoothing;
+                u.uWeight = state.weight;
+                u.uUseAlpha = state.useAlpha;
+                u.uFancyEnable = state.fancyEnable;
+                u.uShowMedian = state.showMedian;
+                u.uOutlineOnOff = state.outlineOn;
+                u.uOutlineWidth = state.outlineWidth;
+                u.uOutlineColor[0] = state.outlineColor[0];
+                u.uOutlineColor[1] = state.outlineColor[1];
+                u.uOutlineColor[2] = state.outlineColor[2];
+                u.uOutlineColor[3] = state.outlineColor[3];
+                u.uGlowOnOff = state.glowOn;
+                u.uGlowColor[0] = state.glowColor[0];
+                u.uGlowColor[1] = state.glowColor[1];
+                u.uGlowColor[2] = state.glowColor[2];
+                u.uGlowColor[3] = state.glowColor[3];
+                u.uGlowRadius = state.glowRadius;
+                u.uGlowAlpha = state.glowAlpha;
+                u.uGlowDiffusion = state.glowDiffusion;
+                u.uGlowOffset[0] = state.glowOffsetX;
+                u.uGlowOffset[1] = state.glowOffsetY;
+                u.uBlurOnOff = state.blurOn;
+                u.uCharBlur = state.charBlur;
+                u.uDebugMode = state.debugMode;
+
+                // Pixi renders automatically via its ticker
+                this.app.render();
+            }
+
+            dispose() {
+                if (this.mesh) {
+                    this.mesh.destroy();
+                    this.mesh = null;
+                }
+                if (this.app) {
+                    this.app.destroy(false);  // Don't remove canvas
+                    this.app = null;
+                }
+            }
+        }
+
+        // ===================== Main =====================
+        async function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'Anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error(`Failed to load: ${src}`));
+                img.src = src;
+            });
+        }
+
+        async function loadAtlasData(type) {
+            const bust = Date.now();
+            const path = type === 'msdf' ? 'atlas' : 'atlas_mtsdf';
+            const [img, json] = await Promise.all([
+                loadImage(`../assets/${path}.png?v=${bust}`),
+                fetch(`../assets/${path}.json?v=${bust}`).then(r => r.json())
+            ]);
+            jsons[type] = json;
+            return { img, json };
+        }
+
+        function getCharUVs() {
+            const json = jsons[currentAtlas];
+            const w = json.common.scaleW;
+            const h = json.common.scaleH;
+            const charData = json.chars.find(c => c.id === state.charCode);
+            if (!charData) return { u0: 0, v0: 0, u1: 1, v1: 1 };
+
+            const u0 = charData.x / w;
+            const v0 = (h - charData.y - charData.height) / h;
+            const u1 = (charData.x + charData.width) / w;
+            const v1 = (h - charData.y) / h;
+            return { u0, v0, u1, v1 };
+        }
+
+        function populateCharSelect() {
+            const select = document.getElementById('charSelect');
+            select.innerHTML = '';
+            const json = jsons[currentAtlas];
+            json.chars.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                const char = c.id >= 32 && c.id < 127 ? String.fromCharCode(c.id) : '?';
+                opt.textContent = `${char} (${c.id})`;
+                if (c.id === state.charCode) opt.selected = true;
+                select.appendChild(opt);
+            });
+        }
+
+        function updateMetrics() {
+            const json = jsons[currentAtlas];
+            const charData = json.chars.find(c => c.id === state.charCode);
+            if (!charData) return;
+            const info = json.info || {};
+            document.getElementById('metricsDisplay').innerHTML = `
+                <div><span style="color:#8cf">id:</span> ${charData.id} (${String.fromCharCode(charData.id)})</div>
+                <div><span style="color:#8cf">size:</span> ${charData.width}x${charData.height}</div>
+                <div><span style="color:#8cf">advance:</span> ${charData.xadvance.toFixed(2)}</div>
+                <div><span style="color:#8cf">gen size:</span> ${info.size || 64}px</div>
+            `;
+        }
+
+        async function switchAPI(api) {
+            state.api = api;
+            const canvas = document.getElementById('canvas');
+            const statusDiv = document.getElementById('apiStatus');
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (renderer) {
+                renderer.dispose();
+                renderer = null;
+            }
+
+            // Need fresh canvas for context switch
+            const newCanvas = document.createElement('canvas');
+            newCanvas.id = 'canvas';
+            newCanvas.width = canvas.width;
+            newCanvas.height = canvas.height;
+            canvas.parentNode.replaceChild(newCanvas, canvas);
+
+            try {
+                if (api === 'webgpu') {
+                    renderer = new WebGPURenderer(newCanvas);
+                } else if (api === 'pixi-webgpu') {
+                    renderer = new PixiWebGPURenderer(newCanvas);
+                } else {
+                    renderer = new WebGL2Renderer(newCanvas);
+                }
+                await renderer.init();
+
+                const msdfData = await loadAtlasData('msdf');
+                const mtsdfData = await loadAtlasData('mtsdf');
+                await renderer.loadTexture('msdf', msdfData.img);
+                await renderer.loadTexture('mtsdf', mtsdfData.img);
+
+                populateCharSelect();
+                const uvs = getCharUVs();
+                renderer.updateUVs(uvs.u0, uvs.v0, uvs.u1, uvs.v1);
+                updateMetrics();
+
+                statusDiv.textContent = `${api.toUpperCase()} active`;
+                statusDiv.style.color = '#8f8';
+                log(`Switched to ${api.toUpperCase()}`);
+
+                requestAnimationFrame(drawLoop);
+            } catch (e) {
+                statusDiv.textContent = `${api.toUpperCase()} failed: ${e.message}`;
+                statusDiv.style.color = '#f88';
+                log(`${api.toUpperCase()} error: ${e.message}`);
+                if (api === 'webgpu') {
+                    document.getElementById('apiSelect').value = 'webgl2';
+                    await switchAPI('webgl2');
+                }
+            }
+        }
+
+        function drawLoop() {
+            if (renderer) renderer.draw();
+            animationFrameId = requestAnimationFrame(drawLoop);
+        }
+
+        // ===================== Event Bindings =====================
+        function setupControls() {
+            const bind = (id, key, fmt = v => v) => {
+                const el = document.getElementById(id);
+                const disp = document.getElementById(id + 'Val');
+                el.oninput = () => {
+                    state[key] = parseFloat(el.value);
+                    if (disp) disp.textContent = fmt(state[key]);
+                };
+            };
+
+            // Size needs to trigger mesh rebuild
+            const sizeEl = document.getElementById('size');
+            const sizeDisp = document.getElementById('sizeVal');
+            sizeEl.oninput = () => {
+                state.size = parseFloat(sizeEl.value);
+                sizeDisp.textContent = state.size + 'px';
+                if (renderer) {
+                    const uvs = getCharUVs();
+                    renderer.updateUVs(uvs.u0, uvs.v0, uvs.u1, uvs.v1);
+                }
+            };
+
+            bind('smoothing', 'smoothing');
+            bind('weight', 'weight');
+            bind('outlineWidth', 'outlineWidth');
+            bind('glowRadius', 'glowRadius');
+            bind('glowAlpha', 'glowAlpha');
+            bind('glowDiffusion', 'glowDiffusion');
+            bind('glowOffsetX', 'glowOffsetX');
+            bind('glowOffsetY', 'glowOffsetY');
+            bind('charBlur', 'charBlur');
+
+            document.getElementById('useAlpha').onchange = e => state.useAlpha = e.target.checked ? 1 : 0;
+            document.getElementById('showBounds').onchange = e => state.showBounds = e.target.checked;
+            document.getElementById('fancyEnable').onchange = e => {
+                state.fancyEnable = e.target.checked ? 1 : 0;
+                document.getElementById('fancyControls').style.opacity = e.target.checked ? '1' : '0.5';
+            };
+            document.getElementById('showMedian').onchange = e => state.showMedian = e.target.checked ? 1 : 0;
+            document.getElementById('outlineOn').onchange = e => state.outlineOn = e.target.checked ? 1 : 0;
+            document.getElementById('outlineColor').oninput = e => {
+                const hex = e.target.value;
+                state.outlineColor[0] = parseInt(hex.substr(1,2), 16) / 255;
+                state.outlineColor[1] = parseInt(hex.substr(3,2), 16) / 255;
+                state.outlineColor[2] = parseInt(hex.substr(5,2), 16) / 255;
+            };
+            document.getElementById('glowOn').onchange = e => state.glowOn = e.target.checked ? 1 : 0;
+            document.getElementById('glowColor').oninput = e => {
+                const hex = e.target.value;
+                state.glowColor[0] = parseInt(hex.substr(1,2), 16) / 255;
+                state.glowColor[1] = parseInt(hex.substr(3,2), 16) / 255;
+                state.glowColor[2] = parseInt(hex.substr(5,2), 16) / 255;
+            };
+            document.getElementById('blurOn').onchange = e => state.blurOn = e.target.checked ? 1 : 0;
+
+            document.querySelectorAll('input[name="debugMode"]').forEach(r => {
+                r.onchange = e => state.debugMode = parseInt(e.target.value);
+            });
+
+            document.getElementById('charSelect').onchange = e => {
+                state.charCode = parseInt(e.target.value);
+                const uvs = getCharUVs();
+                renderer.updateUVs(uvs.u0, uvs.v0, uvs.u1, uvs.v1);
+                updateMetrics();
+            };
+
+            document.getElementById('textureSrc').onchange = e => {
+                currentAtlas = e.target.value;
+                state.useAlpha = currentAtlas === 'mtsdf' ? 1 : 0;
+                document.getElementById('useAlpha').checked = state.useAlpha > 0.5;
+                populateCharSelect();
+                const uvs = getCharUVs();
+                renderer.updateUVs(uvs.u0, uvs.v0, uvs.u1, uvs.v1);
+                updateMetrics();
+            };
+
+            document.getElementById('apiSelect').onchange = e => switchAPI(e.target.value);
+        }
+
+        // ===================== Init =====================
+        setupControls();
+        switchAPI('webgl2').catch(e => log('Init error: ' + e.message));
+    </script>
+</body>
+</html>
