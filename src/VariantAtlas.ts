@@ -1,6 +1,6 @@
 import type { TextureFactory, GlyphMetrics, GlyphLocation } from './types.js';
 import { isLatinChar } from './types.js';
-import { Page } from './page.js';
+import { Page } from './Page.js';
 
 // Placeholder metrics for reserved but not-yet-generated glyphs
 const PLACEHOLDER_METRICS: GlyphMetrics = {

@@ -1,5 +1,5 @@
 import { MSDFGenerator, MSDFGlyph } from '../lib/kitMSDF/kitMSDF.js';
-import { WorkerPool } from './worker-pool.js';
+import { WorkerPool } from './worker/WorkerPool.js';
 
 export interface AtlasChar {
     id: number;

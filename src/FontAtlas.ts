@@ -32,7 +32,7 @@
 import type { MSDFGenerator, VariationAxis } from '../lib/kitMSDF/kitMSDF.js';
 import type { TextureFactory, GlyphRequest, GlyphInfo, GlyphMetrics, AtlasConfig, AtlasStatus, GlyphLocation } from './types.js';
 import { DEFAULT_CONFIG, LATIN_CODEPOINTS } from './types.js';
-import { VariantAtlas } from './variant-atlas.js';
+import { VariantAtlas } from './VariantAtlas.js';
 
 interface PendingGlyph {
     codePoint: number;

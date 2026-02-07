@@ -3,15 +3,15 @@
  */
 
 // FontAtlas - main on-demand glyph cache
-export { FontAtlas } from './font-atlas.js';
-export { VariantAtlas } from './variant-atlas.js';
-export { Page } from './page.js';
+export { FontAtlas } from './FontAtlas.js';
+export { VariantAtlas } from './VariantAtlas.js';
+export { Page } from './Page.js';
 
 // AtlasGenerator - batch generation of entire atlas sheets
-export { AtlasGenerator, AtlasResult, AtlasTiming, AtlasChar } from './atlas-generator.js';
+export { AtlasGenerator, AtlasResult, AtlasTiming, AtlasChar } from './AtlasGenerator.js';
 
 // WorkerPool - browser version
-export { WorkerPool, WorkerPoolOptions } from './worker-pool-browser.js';
+export { WorkerPool, WorkerPoolOptions } from './worker/WorkerPool-browser.js';
 
 // Types
 export {

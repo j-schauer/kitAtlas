@@ -1,6 +1,7 @@
 import type { TextureFactory } from './types.js';
 
 export class Page<T> {
+
     readonly width: number;
     readonly height: number;
 
