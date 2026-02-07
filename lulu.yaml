@@ -13,12 +13,12 @@ deps:
     update: npm install
 
   kitMSDF:
-    type: transient
-    source: "local:../kitMSDF (TODO: publish to github)"
+    type: transient-depot
+    source: "github:j-schauer/kitMSDF"
     path: lib/kitMSDF/
     export: []
-    notes: "MSDF glyph generation (WASM) - for tests and examples"
-    update: mkdir -p lib/kitMSDF && cp ../kitMSDF/dist/release/kitMSDF.js ../kitMSDF/dist/release/msdf-core.js ../kitMSDF/dist/release/msdf-core.wasm ../kitMSDF/dist/release/shaders.js lib/kitMSDF/
+    notes: "MSDF glyph generation via WASM"
+    update: lulu depot github j-schauer/kitMSDF 'kitMSDF-*.zip' lib/kitMSDF/ --latest
 
   pixl:
     type: transient-depot
@@ -29,35 +29,27 @@ deps:
     update: lulu depot github j-schauer/pixl 'pixl-*.zip' lib/pixl/ --latest
 
 build:
-  test:
-    - |
-      @deps
-      mkdir -p ${TARGET}/assets
-      # Bundle for testing (includes kitMSDF)
-      npx esbuild src/index.ts --bundle --format=esm --platform=node --target=es2020 \
-        --outfile=${TARGET}/kitAtlas.js \
-        --external:fs --external:path --external:module --external:url --external:worker_threads
-      # Copy kitMSDF artifacts
-      cp lib/kitMSDF/msdf-core.js lib/kitMSDF/msdf-core.wasm ${TARGET}/
-      cp lib/kitMSDF/kitMSDF.js ${TARGET}/
-      cp assets/*.ttf ${TARGET}/assets/
-      # Compile tests
-      npx tsc tests/font-atlas-test.ts --target esnext --module esnext --moduleResolution node --outDir ${TARGET} --skipLibCheck
-
   release:
     - |
       @deps
-      mkdir -p ${TARGET} ${TARGET}/worker
-      # Copy TS source files (module pattern)
-      cp src/*.ts ${TARGET}/
-      cp src/worker/*.ts ${TARGET}/worker/
-      cp docs/api.md ${TARGET}/
+      mkdir -p dist dist/worker
+      cp src/*.ts dist/
+      cp src/worker/*.ts dist/worker/
+      cp docs/api.md dist/
 
 run:
   test:
     - |
-      @build test
-      cd ${TARGET} && node font-atlas-test.js
+      @deps
+      mkdir -p dist/assets
+      npx esbuild src/index.ts --bundle --format=esm --platform=node --target=es2020 \
+        --outfile=dist/kitAtlas.js \
+        --external:fs --external:path --external:module --external:url --external:worker_threads
+      cp lib/kitMSDF/msdf-core.js lib/kitMSDF/msdf-core.wasm dist/
+      cp lib/kitMSDF/kitMSDF.js dist/
+      cp assets/*.ttf dist/assets/
+      npx tsc tests/font-atlas-test.ts --target esnext --module esnext --moduleResolution node --outDir dist --skipLibCheck
+      cd dist && node font-atlas-test.js
 
   example:
     - |
