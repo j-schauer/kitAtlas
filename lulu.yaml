@@ -18,7 +18,7 @@ deps:
     path: lib/kitMSDF/
     export: []
     notes: "MSDF glyph generation (WASM) - for tests and examples"
-    update: mkdir -p lib/kitMSDF && cp ../kitMSDF/dist/kitMSDF.js ../kitMSDF/dist/msdf-core.js ../kitMSDF/dist/msdf-core.wasm lib/kitMSDF/
+    update: mkdir -p lib/kitMSDF && cp ../kitMSDF/dist/kitMSDF.js ../kitMSDF/dist/msdf-core.js ../kitMSDF/dist/msdf-core.wasm ../kitMSDF/dist/shaders.js lib/kitMSDF/
 
   pixl:
     type: transient-depot
@@ -50,7 +50,6 @@ build:
       mkdir -p ${TARGET}
       # Copy TS source files (module pattern)
       cp src/*.ts ${TARGET}/
-      cp src/shaders.js ${TARGET}/
       cp docs/api.md ${TARGET}/
 
   browser:

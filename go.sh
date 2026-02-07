@@ -1,4 +1,4 @@
 #!/bin/bash
 # SIMPLE COMMANDS ONLY, ONLY 1 AT A TIME, DON'T DO THINGS OUTSIDE OF KITXXX OR FONTATLAS. CHANGE CONTENTS BEFORE EACH CALL.
 
-cp ../fontAtlas/tests/test.html tests/
+cp ../kitMSDF/dist/shaders.js lib/kitMSDF/

@@ -6,7 +6,7 @@
 //   const node = new DemoGlyphRun(PIXI, { texture, atlasJson, pxRange: 8 });
 //   node.renderTile(tile, scale);
 
-import { msdfWGSL } from '../../src/shaders.js';
+import { msdfWGSL } from '../../lib/kitMSDF/shaders.js';
 
 // Shared shader program - reused across instances
 let _gpuProgram = null;
